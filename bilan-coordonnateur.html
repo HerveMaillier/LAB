@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bilan par coordonnateur</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  :root {
+    --ink: #1c2733;
+    --muted: #5d6b79;
+    --line: #d9dee3;
+    --track: #e8edf1;
+    --accent: #0d5c75;
+    --paper: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 20px 24px 40px; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+  .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .controls select, .controls input { font: inherit; color: var(--ink); padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; background: #fff; min-width: 150px; }
+  .controls select { min-width: 260px; }
+  .controls button { margin-left: auto; font: inherit; padding: 6px 14px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 4px; cursor: pointer; }
+  .controls button:hover { background: #0a4a5f; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  h1 { font: 600 30px/1.15 "Iowan Old Style", Georgia, serif; margin: 0 0 4px; }
+  .period { color: var(--muted); margin: 0 0 18px; }
+  .lede { font: 20px/1.55 "Iowan Old Style", Georgia, serif; max-width: 62ch; margin: 0 0 30px; }
+  .lede b { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  .cols { display: grid; grid-template-columns: minmax(280px, 3fr) minmax(200px, 2fr); gap: 32px; margin-bottom: 32px; }
+  h2 { font: 600 15px/1.3 system-ui, sans-serif; margin: 0 0 10px; }
+
+  .bar { display: grid; grid-template-columns: 150px 1fr 90px; gap: 10px; align-items: center; margin: 6px 0; }
+  .bar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .track { height: 10px; background: var(--track); border-radius: 2px; overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--accent); }
+  .bar .val { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  dl { margin: 0 0 18px; }
+  dl div { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--track); }
+  dt { margin: 0; } dd { margin: 0; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 6px 8px; border-bottom: 2px solid var(--ink); }
+  td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .sub { display: block; color: var(--muted); font-size: 12px; }
+  tfoot td { font-weight: 700; border-top: 2px solid var(--ink); border-bottom: none; }
+
+  .empty { color: var(--muted); padding: 40px 0; max-width: 60ch; }
+
+  @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } .bar { grid-template-columns: 110px 1fr 80px; } }
+  @media print {
+    body { padding: 0; }
+    .controls { display: none; }
+    tr, .bar { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <label>Coordonnateur
+    <select id="coord"></select>
+  </label>
+  <label>Du
+    <input type="date" id="from">
+  </label>
+  <label>Au
+    <input type="date" id="to">
+  </label>
+  <button id="print" type="button">Imprimer / enregistrer en PDF</button>
+</div>
+
+<main id="report"></main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+const num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const plural = (n, one, many) => n + ' ' + (n > 1 ? many : one);
+const fmtInt = n => n.toLocaleString('fr-FR');
+
+grist.ready({
+  requiredAccess: 'read table',
+  columns: [
+    { name: 'coordinateur', title: 'Coordonnateur', type: 'Text,Choice' },
+    { name: 'intitule',     title: "Intitulé de l'activité", type: 'Text,Choice' },
+    { name: 'date',         title: 'Date', type: 'Any', optional: true },
+    { name: 'niveau',       title: 'Niveau', type: 'Any', optional: true },
+    { name: 'eleves',       title: "Nombre d'élèves impactés", type: 'Numeric,Int', optional: true },
+    { name: 'adultes',      title: 'Nombre de professeurs/adultes formés', type: 'Numeric,Int', optional: true },
+    { name: 'parents',      title: 'Nombre de parents impactés', type: 'Numeric,Int', optional: true },
+    { name: 'thematique',   title: 'Thématique', type: 'Any', optional: true },
+    { name: 'projet',       title: 'Projets', type: 'Any', optional: true },
+    { name: 'etablissement',title: 'Établissement', type: 'Any', optional: true },
+    { name: 'objectifs',    title: 'Objectifs visés', type: 'Any', optional: true },
+  ],
+});
+
+let rows = [];
+let mapped = false;
+
+// Date Grist (secondes) ou numéro de série Excel (ex. 46266) → Date JS
+function toDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') {
+    if (v > 1e8) return new Date(v * 1000);
+    if (v > 20000 && v < 80000) return new Date(Math.round((v - 25569) * 86400000));
+  }
+  return null;
+}
+const fmtDate = v => {
+  const d = toDate(v);
+  return d ? d.toLocaleDateString('fr-FR', { timeZone: 'UTC' }) : clean(v);
+};
+
+grist.onRecords(recs => {
+  const m = grist.mapColumnNames(recs);
+  mapped = !!m;
+  rows = m || [];
+  fillSelect();
+  render();
+});
+
+function fillSelect() {
+  const sel = $('coord');
+  const current = sel.value;
+  const names = [...new Set(rows.map(r => clean(r.coordinateur)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'fr'));
+  sel.innerHTML = '<option value="">Tous les coordonnateurs</option>' +
+    names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (names.includes(current)) sel.value = current;
+}
+
+function tally(list, key, weightKey) {
+  const map = new Map();
+  for (const r of list) {
+    const k = clean(r[key]);
+    if (!k) continue;
+    const e = map.get(k) || { name: k, n: 0, eleves: 0 };
+    e.n += 1; e.eleves += num(r[weightKey]);
+    map.set(k, e);
+  }
+  return [...map.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, 'fr'));
+}
+
+function render() {
+  const out = $('report');
+  if (!mapped) {
+    out.innerHTML = '<p class="empty">Associez au moins les colonnes « Coordonnateur » et « Intitulé de l\'activité » dans le panneau de configuration du widget.</p>';
+    return;
+  }
+  const who = $('coord').value;
+  const from = $('from').value ? new Date($('from').value + 'T00:00:00Z') : null;
+  const to = $('to').value ? new Date($('to').value + 'T23:59:59Z') : null;
+
+  let list = rows.filter(r => !who || clean(r.coordinateur) === who);
+  if (from || to) {
+    list = list.filter(r => {
+      const d = toDate(r.date);
+      return d && (!from || d >= from) && (!to || d <= to);
+    });
+  }
+  list.sort((a, b) => (toDate(a.date) || 0) - (toDate(b.date) || 0));
+
+  if (!list.length) {
+    out.innerHTML = '<p class="empty">Aucune activité pour cette sélection.</p>';
+    return;
+  }
+
+  const sum = k => list.reduce((t, r) => t + num(r[k]), 0);
+  const eleves = sum('eleves'), adultes = sum('adultes'), parents = sum('parents');
+  const etabs = new Set(list.map(r => clean(r.etablissement)).filter(Boolean)).size;
+  const themes = tally(list, 'thematique', 'eleves');
+  const niveaux = tally(list, 'niveau', 'eleves');
+  const projets = tally(list, 'projet', 'eleves');
+  const maxTheme = Math.max(1, ...themes.map(t => t.n));
+
+  const dates = list.map(r => toDate(r.date)).filter(Boolean);
+  const period = dates.length
+    ? `Activités du ${fmtDate(Math.min(...dates) / 1000)} au ${fmtDate(Math.max(...dates) / 1000)}`
+    : '';
+
+  const bars = themes.map(t => `
+    <div class="bar">
+      <span class="name" title="${esc(t.name)}">${esc(t.name)}</span>
+      <span class="track"><span class="fill" style="display:block;width:${(t.n / maxTheme) * 100}%"></span></span>
+      <span class="val">${t.n} act. / ${fmtInt(t.eleves)} él.</span>
+    </div>`).join('');
+
+  const dl = items => items.map(i => `<div><dt>${esc(i.name)}</dt><dd>${i.n}</dd></div>`).join('');
+
+  const body = list.map(r => {
+    const sub = [clean(r.thematique), clean(r.projet)].filter(Boolean).join(', ');
+    return `<tr>
+      <td>${esc(fmtDate(r.date))}</td>
+      <td>${esc(clean(r.intitule))}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</td>
+      <td>${esc(clean(r.etablissement))}</td>
+      <td>${esc(clean(r.niveau))}</td>
+      <td class="n">${num(r.eleves)}</td>
+      <td class="n">${num(r.adultes)}</td>
+      <td class="n">${num(r.parents)}</td>
+    </tr>`;
+  }).join('');
+
+  out.innerHTML = `
+    <h1>${esc(who || 'Tous les coordonnateurs')}</h1>
+    <p class="period">${esc(period)}</p>
+    <p class="lede">
+      <b>${plural(list.length, 'activité', 'activités')}</b>
+      ${etabs ? `dans <b>${plural(etabs, 'établissement', 'établissements')}</b>` : ''} :
+      <b>${fmtInt(eleves)}</b> élèves concernés,
+      <b>${fmtInt(adultes)}</b> enseignants et adultes formés,
+      <b>${fmtInt(parents)}</b> parents touchés.
+    </p>
+
+    <div class="cols">
+      <section>
+        <h2>Répartition par thématique</h2>
+        ${bars || '<p class="empty">Thématique non renseignée.</p>'}
+      </section>
+      <section>
+        ${niveaux.length ? `<h2>Niveaux</h2><dl>${dl(niveaux)}</dl>` : ''}
+        ${projets.length ? `<h2>Projets</h2><dl>${dl(projets)}</dl>` : ''}
+      </section>
+    </div>
+
+    <h2>Détail des activités</h2>
+    <table>
+      <thead><tr>
+        <th>Date</th><th>Activité</th><th>Établissement</th><th>Niveau</th>
+        <th class="n">Élèves</th><th class="n">Adultes</th><th class="n">Parents</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr>
+        <td colspan="4">Total</td>
+        <td class="n">${fmtInt(eleves)}</td><td class="n">${fmtInt(adultes)}</td><td class="n">${fmtInt(parents)}</td>
+      </tr></tfoot>
+    </table>`;
+}
+
+['coord', 'from', 'to'].forEach(id => $(id).addEventListener('change', render));
+$('print').addEventListener('click', () => window.print());
+</script>
+</body>
+</html>
